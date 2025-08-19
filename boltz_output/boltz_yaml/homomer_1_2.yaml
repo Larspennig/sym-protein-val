@@ -1,0 +1,31 @@
+sequences:
+- protein:
+    cyclic: false
+    id: A
+    msa: empty
+    sequence: AASAAIAALLAATAAALAAAGAIGAALDPALGLGALALGATLLAGAAAAALAIEALLAAL
+- protein:
+    cyclic: false
+    id: B
+    msa: empty
+    sequence: SLRALVAALLAAAAALLAAAGAAGAALDPALGLAALALGLTLLAGALAAAIAIFALLAAL
+- protein:
+    cyclic: false
+    id: C
+    msa: empty
+    sequence: GALAAVLALAAATLAAVAAAGAIGAALDPALGLAAGALGLTLLAGALAAAIAIFALLAAL
+- protein:
+    cyclic: false
+    id: D
+    msa: empty
+    sequence: AAAAAVLALLAAAAAAAAAGGALGAALDPALGLAAGALGLTLLAGALLLAIGIFALIAAL
+- protein:
+    cyclic: false
+    id: E
+    msa: empty
+    sequence: AAKAAAAALAAATAAANAAGGALGAALSVLGVAAGALGATLLAAAALLALGIFALIQALS
+- protein:
+    cyclic: false
+    id: F
+    msa: empty
+    sequence: DLAKRIAALLAATAAAVAAAAAWGAALSVLGVAAGALGATLLAAAALLALGLEALLQALS

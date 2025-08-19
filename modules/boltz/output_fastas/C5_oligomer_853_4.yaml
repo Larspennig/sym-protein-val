@@ -1,0 +1,26 @@
+sequences:
+- protein:
+    cyclic: false
+    id: A
+    msa: empty
+    sequence: MKLVFQLVLSEDEKKVRENKEKALKAVLELADLVDEIIVTAPLSEEALEAAKEIVKALKEKK
+- protein:
+    cyclic: false
+    id: B
+    msa: empty
+    sequence: MKLVFQLVLSEDEKKVRENKEKALKAVLELADLVDEIIVTAPLSEEALEAAKEIVKALKEKK
+- protein:
+    cyclic: false
+    id: C
+    msa: empty
+    sequence: MKLVFQLVLSEDEKKVRENKEKALKAVLELADLVDEIIVTAPLSEEALEAAKEIVKALKEKK
+- protein:
+    cyclic: false
+    id: D
+    msa: empty
+    sequence: MKLVFQLVLSEDEKKVRENKEKALKAVLELADLVDEIIVTAPLSEEALEAAKEIVKALKEKK
+- protein:
+    cyclic: false
+    id: E
+    msa: empty
+    sequence: MKLVFQLVLSEDEKKVRENKEKALKAVLELADLVDEIIVTAPLSEEALEAAKEIVKALKEKK
