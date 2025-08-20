@@ -20,7 +20,7 @@
             "justMyCode": false,
             "args": [
                 "--input_path=ff_output",
-                "--output_path=eval_symmetric/boltz_output"
+                "--output_path=eval_symmetric/process_output"
             ]
         }
     ]

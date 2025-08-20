@@ -10,6 +10,7 @@ from Bio import SeqIO
 import yaml
 import re
 import pandas as pd
+from pmpnn import run_pmpnn_processes
 
 
 def evaluate_results(folder_path):
@@ -42,21 +43,6 @@ def evaluate_results(folder_path):
     sample_df.to_csv(output_csv, index=False)
 
     print(f"Sample evaluation saved to {output_csv}")
-
-
-def preprocess_pdbs(input_path, output_path):
-    """Preprocess input PDB files for ProteinMPNN."""
-    pre_output_path = os.path.join(output_path, "parsed_pdbs.jsonl")
-    process = subprocess.Popen(
-        [
-            "python",
-            "modules/ProteinMPNN/helper_scripts/parse_multiple_chains.py",
-            f"--input_path={input_path}",
-            f"--output_path={pre_output_path}",
-        ]
-    )
-    _ = process.wait()
-    return pre_output_path
 
 
 def parse_chains_from_record(record):
@@ -133,40 +119,17 @@ def convert_sequences_to_yaml(mpnn_fasta_path, output_path):
 
 def run_protein_mpnn(pre_output_path, output_path, num_seq_per_target=8):
     """Run ProteinMPNN to generate sequences."""
-    pmpnn_args = [
-        "python",
-        "modules/ProteinMPNN/protein_mpnn_run.py",
-        "--out_folder",
-        f"{output_path}/protein_mpnn",
-        "--jsonl_path",
-        pre_output_path,
-        "--num_seq_per_target",
-        str(num_seq_per_target),
-        "--sampling_temp",
-        "0.1",
-        "--seed",
-        str(123),
-        "--batch_size",
-        "1",
-    ]
-
-    gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
-    if gpu_id:
-        pmpnn_args.extend(["--device", str(gpu_id)])
-
-    num_tries = 0
-    ret = -1
-    while ret != 0:  # Fixed: was ret < 0
-        try:
-            process = subprocess.Popen(pmpnn_args, stdout=subprocess.PIPE, stderr=subprocess.STDOUT)
-            ret = process.wait()
-            if ret == 0:
-                break
-        except Exception as e:
-            num_tries += 1
-            torch.cuda.empty_cache()
-            if num_tries > 4:
-                raise e
+    run_pmpnn_processes(
+        input_path=pre_output_path,
+        output_dir=os.path.join(output_path, "protein_mpnn"),
+        symmetry=True,
+        seqs=num_seq_per_target,
+        sampling_temp=0.2,
+        use_soluble_model=False,
+    )
+    # gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+    # if gpu_id:
+    #     pmpnn_args.extend(["--device", str(gpu_id)])
 
     return os.path.join(output_path, "protein_mpnn", "seqs")
 
@@ -183,19 +146,18 @@ def main(input_path, output_path, num_seq_per_target=8):
     # Create output directory
     Path(output_path).mkdir(parents=True, exist_ok=True)
 
-    # Step 1: Preprocess PDB files for ProteinMPNN
-    pre_output_path = preprocess_pdbs(input_path, output_path)
+    # Step 1: Run ProteinMPNN
+    mpnn_fasta_path = run_protein_mpnn(input_path, output_path, num_seq_per_target)
 
-    # Step 2: Run ProteinMPNN
-    mpnn_fasta_path = run_protein_mpnn(pre_output_path, output_path, num_seq_per_target)
+    # Eventually build in Foldseek clustering here and give vector with num_folds per backbone to Boltz
 
-    # Step 3: Convert FASTA to YAML format for Boltz
+    # Step 2: Convert FASTA to YAML format for Boltz
     yaml_folder, yaml_files = convert_sequences_to_yaml(mpnn_fasta_path, output_path)
 
-    # Step 4: Run Boltz folding
+    # Step 3: Run Boltz folding
     run_boltz_folding(yaml_folder)
 
-    # Step 5: Evaluate results
+    # Step 4: Evaluate results
     evaluate_results(output_path)
 
 if __name__ == "__main__":
