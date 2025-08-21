@@ -11,162 +11,164 @@ import yaml
 import re
 import pandas as pd
 from pmpnn import run_pmpnn_processes
+from evaluator import Evaluator
+import shutil
 
 
-def evaluate_results(folder_path):
-    sample_paths = list(Path(folder_path).glob("**/confidence*.json"))
-    sample_list = []
-    for sample in sample_paths:
-        sample_name = sample.stem
-        # load json
-        try:
-            df = pd.read_json(sample)
-        except ValueError as e:
-            print(f"Error reading {sample_name}: {e}")
-            continue
-        # extract relevant sample. Mean is only computed because value is the same for all chains.
-        sample_df = {
-            "sample_name": sample_name,
-            "num_chains": len(df),
-            "confidence_score": df["confidence_score"].mean(),
-            "ptm_score": df["ptm_score"].mean(),
-            "iptm_score": df["iptm_score"].mean(),
-            "complex_plddt": df["complex_plddt"].mean(),
-            "complex_iplddt": df["complex_ipl_ddt"].mean(),
-            "complex_ipde": df["complex_ipde"].mean()
-        }
-        sample_list.append(sample_df)
+class ValidationPipeline:
+    def __init__(self, folder_path, num_seq_per_target=8):
+        self.folder_path = folder_path
+        self.num_seq_per_target = num_seq_per_target
 
-    sample_df = pd.DataFrame(sample_list)
-    # save to csv
-    output_csv = Path(folder_path) /  "sample_evaluation.csv"
-    sample_df.to_csv(output_csv, index=False)
+        self.evaluator = Evaluator(folder_path)
 
-    print(f"Sample evaluation saved to {output_csv}")
-
-
-def parse_chains_from_record(record):
-    """Parse chains from a FASTA record."""
-    chain_seqs = str(record.seq).split("/")
-    chains = []
-    for j, chain_seq in enumerate(chain_seqs):
-        entry = {
-            "protein": {
-                "id": chr(ord("A") + j),
-                "sequence": chain_seq,
-                "msa": "empty",
-                "cyclic": False,
+    def parse_chains_from_record(self, record):
+        """Parse chains from a FASTA record."""
+        chain_seqs = str(record.seq).split("/")
+        chains = []
+        for j, chain_seq in enumerate(chain_seqs):
+            entry = {
+                "protein": {
+                    "id": chr(ord("A") + j),
+                    "sequence": chain_seq,
+                    "msa": "empty",
+                    "cyclic": False,
+                }
             }
-        }
-        chains.append(entry)
-    return chains
+            chains.append(entry)
+        return chains
 
+    def extract_score_from_record(self, record):
+        """Extract score from FASTA record description."""
+        match = re.search(r"score=([0-9.]+)", record.description)
+        return float(match.group(1)) if match else 0.0
 
-def extract_score_from_record(record):
-    """Extract score from FASTA record description."""
-    match = re.search(r"score=([0-9.]+)", record.description)
-    return float(match.group(1)) if match else 0.0
+    def process_fasta_to_yaml(self, fasta_file, output_yaml_folder, k=4):
+        """Process a single FASTA file and create YAML files."""
+        records = list(SeqIO.parse(fasta_file, "fasta"))
+        if not records:
+            print(f"No sequences found in {fasta_file}. Skipping.")
+            return []
 
+        # Extract sequences and scores
+        homomers = []
+        scores = []
+        for record in records[1:]:  # skip record 0 as it only contains prototype sequence
+            chains = self.parse_chains_from_record(record)
+            score = self.extract_score_from_record(record)
+            homomers.append(chains)
+            scores.append(score)
 
-def process_fasta_to_yaml(fasta_file, output_yaml_folder, k=4):
-    """Process a single FASTA file and create YAML files."""
-    records = list(SeqIO.parse(fasta_file, "fasta"))
-    if not records:
-        print(f"No sequences found in {fasta_file}. Skipping.")
-        return []
+        # Keep top k sequences
+        if len(homomers) > k:
+            sorted_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
+            top_k_indices = sorted_indices[:k]
+            homomers = [homomers[i] for i in top_k_indices]
 
-    # Extract sequences and scores
-    homomers = []
-    scores = []
-    for record in records:
-        chains = parse_chains_from_record(record)
-        score = extract_score_from_record(record)
-        homomers.append(chains)
-        scores.append(score)
+        # Create YAML files
+        yaml_files = []
+        for i, homomer in enumerate(homomers):
+            yaml_data = {"sequences": homomer}
+            yaml_file_path = output_yaml_folder / f"{fasta_file.stem}_seq_{i}.yaml"  # Fixed variable name
+            with open(yaml_file_path, "w") as yaml_file:
+                yaml.dump(yaml_data, yaml_file, default_flow_style=False)
+            yaml_files.append(yaml_file_path)
 
-    # Keep top k sequences
-    if len(homomers) > k:
-        sorted_indices = sorted(range(len(scores)), key=lambda i: scores[i], reverse=True)
-        top_k_indices = sorted_indices[:k]
-        homomers = [homomers[i] for i in top_k_indices]
+        return yaml_files
 
-    # Create YAML files
-    yaml_files = []
-    for i, homomer in enumerate(homomers):
-        yaml_data = {"sequences": homomer}
-        yaml_file_path = output_yaml_folder / f"{fasta_file.stem}_{i}.yaml"  # Fixed variable name
-        with open(yaml_file_path, "w") as yaml_file:
-            yaml.dump(yaml_data, yaml_file, default_flow_style=False)
-        yaml_files.append(yaml_file_path)
+    def convert_sequences_to_yaml(self, mpnn_fasta_path, output_path):
+        """Convert ProteinMPNN sequences to Boltz YAML format."""
+        fasta_files = [f for f in Path(mpnn_fasta_path, "seqs").iterdir() if f.suffix in [".fasta", ".fa"]]
 
-    return yaml_files
+        output_yaml_folder = Path(output_path) / "boltz_files" / "boltz_yaml"
+        output_yaml_folder.mkdir(parents=True, exist_ok=True)
 
+        all_yaml_files = []
+        for fasta_file in fasta_files:
+            yaml_files = self.process_fasta_to_yaml(fasta_file, output_yaml_folder)
+            all_yaml_files.extend(yaml_files)
 
-def convert_sequences_to_yaml(mpnn_fasta_path, output_path):
-    """Convert ProteinMPNN sequences to Boltz YAML format."""
-    fasta_files = [f for f in Path(mpnn_fasta_path).iterdir() if f.suffix in [".fasta", ".fa"]]
+        # Move all fastas to the processed folder
+        proc_folder = Path(mpnn_fasta_path, "processed")
+        proc_folder.mkdir(parents=True, exist_ok=True)
 
-    output_yaml_folder = Path(output_path) / "boltz_yaml"
-    output_yaml_folder.mkdir(parents=True, exist_ok=True)
+        self.evaluator.move_seqs_to_processed_folder(fasta_files, proc_folder)
 
-    all_yaml_files = []
-    for fasta_file in fasta_files:
-        yaml_files = process_fasta_to_yaml(fasta_file, output_yaml_folder)
-        all_yaml_files.extend(yaml_files)
+        return output_yaml_folder, all_yaml_files
 
-    return output_yaml_folder, all_yaml_files
+    def run_protein_mpnn(self, input_path, output_path, num_seq_per_target=8):
+        """Run ProteinMPNN to generate sequences."""
 
+        self.evaluator.get_backbones_needing_mpnn(input_path)
 
-def run_protein_mpnn(pre_output_path, output_path, num_seq_per_target=8):
-    """Run ProteinMPNN to generate sequences."""
-    run_pmpnn_processes(
-        input_path=pre_output_path,
-        output_dir=os.path.join(output_path, "protein_mpnn"),
-        symmetry=True,
-        seqs=num_seq_per_target,
-        sampling_temp=0.2,
-        use_soluble_model=False,
-    )
-    # gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
-    # if gpu_id:
-    #     pmpnn_args.extend(["--device", str(gpu_id)])
+        run_pmpnn_processes(
+            input_path=input_path + "pdbs/",
+            output_dir=output_path,
+            symmetry=True,
+            seqs=num_seq_per_target,
+            sampling_temp=0.2,
+            use_soluble_model=False,
+        )
+        # gpu_id = os.environ.get("CUDA_VISIBLE_DEVICES", "0")
+        # if gpu_id:
+        #     pmpnn_args.extend(["--device", str(gpu_id)])
 
-    return os.path.join(output_path, "protein_mpnn", "seqs")
+        # Save outputs to dataframe
+        self.evaluator.evaluate_mpnn_outputs(input_path, output_path)
 
+        return os.path.join(output_path)
 
-def run_boltz_folding(yaml_folder):
-    """Run Boltz folding model."""
-    process = subprocess.Popen(["boltz", "predict", str(yaml_folder), "--max_parallel_samples", "2", "--out_dir", "eval_symmetric"])
-    ret = process.wait()
-    if ret != 0:
-        raise RuntimeError(f"Boltz folding failed with return code {ret}")
+    def run_boltz_folding(self, yaml_folder):
+        """Run Boltz folding model."""
+        self.evaluator.get_yamls_needing_boltz(yaml_folder)
 
-def main(input_path, output_path, num_seq_per_target=8):
-    """Main pipeline function."""
-    # Create output directory
-    Path(output_path).mkdir(parents=True, exist_ok=True)
+        process = subprocess.Popen(
+            [
+                "boltz",
+                "predict",
+                str(yaml_folder),
+                "--max_parallel_samples",
+                "2",
+                "--out_dir",
+                f"{self.folder_path}/boltz_files/boltz_out",
+            ],
+        )
+        ret = process.wait()
+        if ret != 0:
+            raise RuntimeError(f"Boltz folding failed with return code {ret}")
 
-    # Step 1: Run ProteinMPNN
-    mpnn_fasta_path = run_protein_mpnn(input_path, output_path, num_seq_per_target)
+        self.evaluator.evaluate_boltz_outputs(yaml_folder)
 
-    # Eventually build in Foldseek clustering here and give vector with num_folds per backbone to Boltz
+    def run_pipeline(self):
+        """Main pipeline function."""
 
-    # Step 2: Convert FASTA to YAML format for Boltz
-    yaml_folder, yaml_files = convert_sequences_to_yaml(mpnn_fasta_path, output_path)
+        # Create output directory
+        Path(self.folder_path).mkdir(parents=True, exist_ok=True)
 
-    # Step 3: Run Boltz folding
-    run_boltz_folding(yaml_folder)
+        # Step 1: Run ProteinMPNN
+        mpnn_fasta_path = self.run_protein_mpnn(
+            os.path.join(self.folder_path, "backbone_pdbs/"),
+            os.path.join(self.folder_path, "pmpnn"),
+            self.num_seq_per_target,
+        )
 
-    # Step 4: Evaluate results
-    evaluate_results(output_path)
+        # Eventually build in Foldseek clustering here and give vector with num_folds per backbone to Boltz
+
+        # Step 2: Convert FASTA to YAML format for Boltz
+        yaml_folder, yaml_files = self.convert_sequences_to_yaml(mpnn_fasta_path, self.folder_path)
+
+        # Step 3: Run Boltz folding
+        self.run_boltz_folding(yaml_folder)
+
+        print("Validation pipeline completed successfully.")
+
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Run ProteinMPNN and Boltz folding model")
-    parser.add_argument("--input_path", type=str, required=True, help="Path to input PDB files")
-    parser.add_argument("--output_path", type=str, required=True, help="Path to output directory")
-    
-    args = parser.parse_args()
-    
-    main(args.input_path, args.output_path)
+    parser.add_argument("--folder_path", type=str, required=True, help="Path to input PDB files")
 
+    args = parser.parse_args()
+
+    pipeline = ValidationPipeline(args.folder_path, num_seq_per_target=8)
+    pipeline.run_pipeline()
 
