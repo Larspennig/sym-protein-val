@@ -26,8 +26,7 @@ var/
 
 
 # Project data folders
-ff_output
+ff_output/C*
 test_outputs_C6
 eval_symmetric/*
-submit*
 slurm*
