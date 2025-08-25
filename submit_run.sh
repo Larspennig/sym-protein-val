@@ -20,4 +20,4 @@ source $CONDA_BASE/etc/profile.d/conda.sh
 conda activate sym_val
 export PYTHONPATH=${SLURM_SUBMIT_DIR}:$PYTHONPATH
 
-python scripts/run_pipeline.py --folder_path ff_output/C4_symmetry/
+python scripts/run_pipeline.py --folder_path ff_output/C_test/
