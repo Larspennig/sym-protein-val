@@ -227,194 +227,390 @@ def main(args):
     with torch.no_grad():
         test_sum, test_weights = 0., 0.
         for ix, protein in enumerate(dataset_valid):
-            score_list = []
-            global_score_list = []
-            all_probs_list = []
-            all_log_probs_list = []
-            S_sample_list = []
-            batch_clones = [copy.deepcopy(protein) for i in range(BATCH_COPIES)]
-            X, S, mask, lengths, chain_M, chain_encoding_all, chain_list_list, visible_list_list, masked_list_list, masked_chain_length_list_list, chain_M_pos, omit_AA_mask, residue_idx, dihedral_mask, tied_pos_list_of_lists_list, pssm_coef, pssm_bias, pssm_log_odds_all, bias_by_res_all, tied_beta = tied_featurize(batch_clones, device, chain_id_dict, fixed_positions_dict, omit_AA_dict, tied_positions_dict, pssm_dict, bias_by_res_dict, ca_only=args.ca_only)
-            pssm_log_odds_mask = (pssm_log_odds_all > args.pssm_threshold).float() #1.0 for true, 0.0 for false
-            name_ = batch_clones[0]['name']
-            if args.score_only:
-                loop_c = 0 
-                if args.path_to_fasta:
-                    fasta_names, fasta_seqs = parse_fasta(args.path_to_fasta, omit=["/"])
-                    loop_c = len(fasta_seqs)
-                for fc in range(1+loop_c):
-                    if fc == 0:
-                        structure_sequence_score_file = base_folder + '/score_only/' + batch_clones[0]['name'] + f'_pdb'
-                    else:
-                        structure_sequence_score_file = base_folder + '/score_only/' + batch_clones[0]['name'] + f'_fasta_{fc}'
-                    native_score_list = []
-                    global_native_score_list = []
-                    if fc > 0:
-                        input_seq_length = len(fasta_seqs[fc-1])
-                        S_input = torch.tensor([alphabet_dict[AA] for AA in fasta_seqs[fc-1]], device=device)[None,:].repeat(X.shape[0], 1)
-                        S[:,:input_seq_length] = S_input #assumes that S and S_input are alphabetically sorted for masked_chains
+            try:
+                score_list = []
+                global_score_list = []
+                all_probs_list = []
+                all_log_probs_list = []
+                S_sample_list = []
+                batch_clones = [copy.deepcopy(protein) for i in range(BATCH_COPIES)]
+                (
+                    X,
+                    S,
+                    mask,
+                    lengths,
+                    chain_M,
+                    chain_encoding_all,
+                    chain_list_list,
+                    visible_list_list,
+                    masked_list_list,
+                    masked_chain_length_list_list,
+                    chain_M_pos,
+                    omit_AA_mask,
+                    residue_idx,
+                    dihedral_mask,
+                    tied_pos_list_of_lists_list,
+                    pssm_coef,
+                    pssm_bias,
+                    pssm_log_odds_all,
+                    bias_by_res_all,
+                    tied_beta,
+                ) = tied_featurize(
+                    batch_clones,
+                    device,
+                    chain_id_dict,
+                    fixed_positions_dict,
+                    omit_AA_dict,
+                    tied_positions_dict,
+                    pssm_dict,
+                    bias_by_res_dict,
+                    ca_only=args.ca_only,
+                )
+                pssm_log_odds_mask = (pssm_log_odds_all > args.pssm_threshold).float()  # 1.0 for true, 0.0 for false
+                name_ = batch_clones[0]["name"]
+                if args.score_only:
+                    loop_c = 0
+                    if args.path_to_fasta:
+                        fasta_names, fasta_seqs = parse_fasta(args.path_to_fasta, omit=["/"])
+                        loop_c = len(fasta_seqs)
+                    for fc in range(1 + loop_c):
+                        if fc == 0:
+                            structure_sequence_score_file = (
+                                base_folder + "/score_only/" + batch_clones[0]["name"] + f"_pdb"
+                            )
+                        else:
+                            structure_sequence_score_file = (
+                                base_folder + "/score_only/" + batch_clones[0]["name"] + f"_fasta_{fc}"
+                            )
+                        native_score_list = []
+                        global_native_score_list = []
+                        if fc > 0:
+                            input_seq_length = len(fasta_seqs[fc - 1])
+                            S_input = torch.tensor([alphabet_dict[AA] for AA in fasta_seqs[fc - 1]], device=device)[
+                                None, :
+                            ].repeat(X.shape[0], 1)
+                            S[:, :input_seq_length] = (
+                                S_input  # assumes that S and S_input are alphabetically sorted for masked_chains
+                            )
+                        for j in range(NUM_BATCHES):
+                            randn_1 = torch.randn(chain_M.shape, device=X.device)
+                            log_probs = model(
+                                X, S, mask, chain_M * chain_M_pos, residue_idx, chain_encoding_all, randn_1
+                            )
+                            mask_for_loss = mask * chain_M * chain_M_pos
+                            scores = _scores(S, log_probs, mask_for_loss)
+                            native_score = scores.cpu().data.numpy()
+                            native_score_list.append(native_score)
+                            global_scores = _scores(S, log_probs, mask)
+                            global_native_score = global_scores.cpu().data.numpy()
+                            global_native_score_list.append(global_native_score)
+                        native_score = np.concatenate(native_score_list, 0)
+                        global_native_score = np.concatenate(global_native_score_list, 0)
+                        ns_mean = native_score.mean()
+                        ns_mean_print = np.format_float_positional(np.float32(ns_mean), unique=False, precision=4)
+                        ns_std = native_score.std()
+                        ns_std_print = np.format_float_positional(np.float32(ns_std), unique=False, precision=4)
+
+                        global_ns_mean = global_native_score.mean()
+                        global_ns_mean_print = np.format_float_positional(
+                            np.float32(global_ns_mean), unique=False, precision=4
+                        )
+                        global_ns_std = global_native_score.std()
+                        global_ns_std_print = np.format_float_positional(
+                            np.float32(global_ns_std), unique=False, precision=4
+                        )
+
+                        ns_sample_size = native_score.shape[0]
+                        seq_str = _S_to_seq(S[0,], chain_M[0,])
+                        np.savez(
+                            structure_sequence_score_file,
+                            score=native_score,
+                            global_score=global_native_score,
+                            S=S[0,].cpu().numpy(),
+                            seq_str=seq_str,
+                        )
+                        if print_all:
+                            if fc == 0:
+                                print(
+                                    f"Score for {name_} from PDB, mean: {ns_mean_print}, std: {ns_std_print}, sample size: {ns_sample_size},  global score, mean: {global_ns_mean_print}, std: {global_ns_std_print}, sample size: {ns_sample_size}"
+                                )
+                            else:
+                                print(
+                                    f"Score for {name_}_{fc} from FASTA, mean: {ns_mean_print}, std: {ns_std_print}, sample size: {ns_sample_size},  global score, mean: {global_ns_mean_print}, std: {global_ns_std_print}, sample size: {ns_sample_size}"
+                                )
+                elif args.conditional_probs_only:
+                    if print_all:
+                        print(f"Calculating conditional probabilities for {name_}")
+                    conditional_probs_only_file = base_folder + "/conditional_probs_only/" + batch_clones[0]["name"]
+                    log_conditional_probs_list = []
                     for j in range(NUM_BATCHES):
                         randn_1 = torch.randn(chain_M.shape, device=X.device)
-                        log_probs = model(X, S, mask, chain_M*chain_M_pos, residue_idx, chain_encoding_all, randn_1)
-                        mask_for_loss = mask*chain_M*chain_M_pos
-                        scores = _scores(S, log_probs, mask_for_loss)
-                        native_score = scores.cpu().data.numpy()
-                        native_score_list.append(native_score)
-                        global_scores = _scores(S, log_probs, mask)
-                        global_native_score = global_scores.cpu().data.numpy()
-                        global_native_score_list.append(global_native_score)
-                    native_score = np.concatenate(native_score_list, 0)
-                    global_native_score = np.concatenate(global_native_score_list, 0)
-                    ns_mean = native_score.mean()
-                    ns_mean_print = np.format_float_positional(np.float32(ns_mean), unique=False, precision=4)
-                    ns_std = native_score.std()
-                    ns_std_print = np.format_float_positional(np.float32(ns_std), unique=False, precision=4)
-
-                    global_ns_mean = global_native_score.mean()
-                    global_ns_mean_print = np.format_float_positional(np.float32(global_ns_mean), unique=False, precision=4)
-                    global_ns_std = global_native_score.std()
-                    global_ns_std_print = np.format_float_positional(np.float32(global_ns_std), unique=False, precision=4)
-
-                    ns_sample_size = native_score.shape[0]
-                    seq_str = _S_to_seq(S[0,], chain_M[0,])
-                    np.savez(structure_sequence_score_file, score=native_score, global_score=global_native_score, S=S[0,].cpu().numpy(), seq_str=seq_str)
+                        log_conditional_probs = model.conditional_probs(
+                            X,
+                            S,
+                            mask,
+                            chain_M * chain_M_pos,
+                            residue_idx,
+                            chain_encoding_all,
+                            randn_1,
+                            args.conditional_probs_only_backbone,
+                        )
+                        log_conditional_probs_list.append(log_conditional_probs.cpu().numpy())
+                    concat_log_p = np.concatenate(log_conditional_probs_list, 0)  # [B, L, 21]
+                    mask_out = (chain_M * chain_M_pos * mask)[0,].cpu().numpy()
+                    np.savez(
+                        conditional_probs_only_file,
+                        log_p=concat_log_p,
+                        S=S[0,].cpu().numpy(),
+                        mask=mask[0,].cpu().numpy(),
+                        design_mask=mask_out,
+                    )
+                elif args.unconditional_probs_only:
                     if print_all:
-                        if fc == 0:
-                            print(f'Score for {name_} from PDB, mean: {ns_mean_print}, std: {ns_std_print}, sample size: {ns_sample_size},  global score, mean: {global_ns_mean_print}, std: {global_ns_std_print}, sample size: {ns_sample_size}')
-                        else:
-                            print(f'Score for {name_}_{fc} from FASTA, mean: {ns_mean_print}, std: {ns_std_print}, sample size: {ns_sample_size},  global score, mean: {global_ns_mean_print}, std: {global_ns_std_print}, sample size: {ns_sample_size}')
-            elif args.conditional_probs_only:
-                if print_all:
-                    print(f'Calculating conditional probabilities for {name_}')
-                conditional_probs_only_file = base_folder + '/conditional_probs_only/' + batch_clones[0]['name']
-                log_conditional_probs_list = []
-                for j in range(NUM_BATCHES):
+                        print(f"Calculating sequence unconditional probabilities for {name_}")
+                    unconditional_probs_only_file = base_folder + "/unconditional_probs_only/" + batch_clones[0]["name"]
+                    log_unconditional_probs_list = []
+                    for j in range(NUM_BATCHES):
+                        log_unconditional_probs = model.unconditional_probs(X, mask, residue_idx, chain_encoding_all)
+                        log_unconditional_probs_list.append(log_unconditional_probs.cpu().numpy())
+                    concat_log_p = np.concatenate(log_unconditional_probs_list, 0)  # [B, L, 21]
+                    mask_out = (chain_M * chain_M_pos * mask)[0,].cpu().numpy()
+                    np.savez(
+                        unconditional_probs_only_file,
+                        log_p=concat_log_p,
+                        S=S[0,].cpu().numpy(),
+                        mask=mask[0,].cpu().numpy(),
+                        design_mask=mask_out,
+                    )
+                else:
                     randn_1 = torch.randn(chain_M.shape, device=X.device)
-                    log_conditional_probs = model.conditional_probs(X, S, mask, chain_M*chain_M_pos, residue_idx, chain_encoding_all, randn_1, args.conditional_probs_only_backbone)
-                    log_conditional_probs_list.append(log_conditional_probs.cpu().numpy())
-                concat_log_p = np.concatenate(log_conditional_probs_list, 0) #[B, L, 21]
-                mask_out = (chain_M*chain_M_pos*mask)[0,].cpu().numpy()
-                np.savez(conditional_probs_only_file, log_p=concat_log_p, S=S[0,].cpu().numpy(), mask=mask[0,].cpu().numpy(), design_mask=mask_out)
-            elif args.unconditional_probs_only:
-                if print_all:
-                    print(f'Calculating sequence unconditional probabilities for {name_}')
-                unconditional_probs_only_file = base_folder + '/unconditional_probs_only/' + batch_clones[0]['name']
-                log_unconditional_probs_list = []
-                for j in range(NUM_BATCHES):
-                    log_unconditional_probs = model.unconditional_probs(X, mask, residue_idx, chain_encoding_all)
-                    log_unconditional_probs_list.append(log_unconditional_probs.cpu().numpy())
-                concat_log_p = np.concatenate(log_unconditional_probs_list, 0) #[B, L, 21]
-                mask_out = (chain_M*chain_M_pos*mask)[0,].cpu().numpy()
-                np.savez(unconditional_probs_only_file, log_p=concat_log_p, S=S[0,].cpu().numpy(), mask=mask[0,].cpu().numpy(), design_mask=mask_out)
-            else:
-                randn_1 = torch.randn(chain_M.shape, device=X.device)
-                log_probs = model(X, S, mask, chain_M*chain_M_pos, residue_idx, chain_encoding_all, randn_1)
-                mask_for_loss = mask*chain_M*chain_M_pos
-                scores = _scores(S, log_probs, mask_for_loss) #score only the redesigned part
-                native_score = scores.cpu().data.numpy()
-                global_scores = _scores(S, log_probs, mask) #score the whole structure-sequence
-                global_native_score = global_scores.cpu().data.numpy()
-                # Generate some sequences
-                ali_file = base_folder + '/seqs/' + batch_clones[0]['name'] + '.fa'
-                score_file = base_folder + '/scores/' + batch_clones[0]['name'] + '.npz'
-                probs_file = base_folder + '/probs/' + batch_clones[0]['name'] + '.npz'
-                if print_all:
-                    print(f'Generating sequences for: {name_}')
-                t0 = time.time()
-                with open(ali_file, 'w') as f:
-                    for temp in temperatures:
-                        for j in range(NUM_BATCHES):
-                            randn_2 = torch.randn(chain_M.shape, device=X.device)
-                            if tied_positions_dict == None:
-                                sample_dict = model.sample(X, randn_2, S, chain_M, chain_encoding_all, residue_idx, mask=mask, temperature=temp, omit_AAs_np=omit_AAs_np, bias_AAs_np=bias_AAs_np, chain_M_pos=chain_M_pos, omit_AA_mask=omit_AA_mask, pssm_coef=pssm_coef, pssm_bias=pssm_bias, pssm_multi=args.pssm_multi, pssm_log_odds_flag=bool(args.pssm_log_odds_flag), pssm_log_odds_mask=pssm_log_odds_mask, pssm_bias_flag=bool(args.pssm_bias_flag), bias_by_res=bias_by_res_all)
-                                S_sample = sample_dict["S"] 
-                            else:
-                                sample_dict = model.tied_sample(X, randn_2, S, chain_M, chain_encoding_all, residue_idx, mask=mask, temperature=temp, omit_AAs_np=omit_AAs_np, bias_AAs_np=bias_AAs_np, chain_M_pos=chain_M_pos, omit_AA_mask=omit_AA_mask, pssm_coef=pssm_coef, pssm_bias=pssm_bias, pssm_multi=args.pssm_multi, pssm_log_odds_flag=bool(args.pssm_log_odds_flag), pssm_log_odds_mask=pssm_log_odds_mask, pssm_bias_flag=bool(args.pssm_bias_flag), tied_pos=tied_pos_list_of_lists_list[0], tied_beta=tied_beta, bias_by_res=bias_by_res_all)
-                            # Compute scores
-                                S_sample = sample_dict["S"]
-                            log_probs = model(X, S_sample, mask, chain_M*chain_M_pos, residue_idx, chain_encoding_all, randn_2, use_input_decoding_order=True, decoding_order=sample_dict["decoding_order"])
-                            mask_for_loss = mask*chain_M*chain_M_pos
-                            scores = _scores(S_sample, log_probs, mask_for_loss)
-                            scores = scores.cpu().data.numpy()
-                            
-                            global_scores = _scores(S_sample, log_probs, mask) #score the whole structure-sequence
-                            global_scores = global_scores.cpu().data.numpy()
-                            
-                            all_probs_list.append(sample_dict["probs"].cpu().data.numpy())
-                            all_log_probs_list.append(log_probs.cpu().data.numpy())
-                            S_sample_list.append(S_sample.cpu().data.numpy())
-                            for b_ix in range(BATCH_COPIES):
-                                masked_chain_length_list = masked_chain_length_list_list[b_ix]
-                                masked_list = masked_list_list[b_ix]
-                                seq_recovery_rate = torch.sum(torch.sum(torch.nn.functional.one_hot(S[b_ix], 21)*torch.nn.functional.one_hot(S_sample[b_ix], 21),axis=-1)*mask_for_loss[b_ix])/torch.sum(mask_for_loss[b_ix])
-                                seq = _S_to_seq(S_sample[b_ix], chain_M[b_ix])
-                                score = scores[b_ix]
-                                score_list.append(score)
-                                global_score = global_scores[b_ix]
-                                global_score_list.append(global_score)
-                                native_seq = _S_to_seq(S[b_ix], chain_M[b_ix])
-                                if b_ix == 0 and j==0 and temp==temperatures[0]:
+                    log_probs = model(X, S, mask, chain_M * chain_M_pos, residue_idx, chain_encoding_all, randn_1)
+                    mask_for_loss = mask * chain_M * chain_M_pos
+                    scores = _scores(S, log_probs, mask_for_loss)  # score only the redesigned part
+                    native_score = scores.cpu().data.numpy()
+                    global_scores = _scores(S, log_probs, mask)  # score the whole structure-sequence
+                    global_native_score = global_scores.cpu().data.numpy()
+                    # Generate some sequences
+                    ali_file = base_folder + "/seqs/" + batch_clones[0]["name"] + ".fa"
+                    score_file = base_folder + "/scores/" + batch_clones[0]["name"] + ".npz"
+                    probs_file = base_folder + "/probs/" + batch_clones[0]["name"] + ".npz"
+                    if print_all:
+                        print(f"Generating sequences for: {name_}")
+                    t0 = time.time()
+                    with open(ali_file, "w") as f:
+                        for temp in temperatures:
+                            for j in range(NUM_BATCHES):
+                                randn_2 = torch.randn(chain_M.shape, device=X.device)
+                                if tied_positions_dict == None:
+                                    sample_dict = model.sample(
+                                        X,
+                                        randn_2,
+                                        S,
+                                        chain_M,
+                                        chain_encoding_all,
+                                        residue_idx,
+                                        mask=mask,
+                                        temperature=temp,
+                                        omit_AAs_np=omit_AAs_np,
+                                        bias_AAs_np=bias_AAs_np,
+                                        chain_M_pos=chain_M_pos,
+                                        omit_AA_mask=omit_AA_mask,
+                                        pssm_coef=pssm_coef,
+                                        pssm_bias=pssm_bias,
+                                        pssm_multi=args.pssm_multi,
+                                        pssm_log_odds_flag=bool(args.pssm_log_odds_flag),
+                                        pssm_log_odds_mask=pssm_log_odds_mask,
+                                        pssm_bias_flag=bool(args.pssm_bias_flag),
+                                        bias_by_res=bias_by_res_all,
+                                    )
+                                    S_sample = sample_dict["S"]
+                                else:
+                                    sample_dict = model.tied_sample(
+                                        X,
+                                        randn_2,
+                                        S,
+                                        chain_M,
+                                        chain_encoding_all,
+                                        residue_idx,
+                                        mask=mask,
+                                        temperature=temp,
+                                        omit_AAs_np=omit_AAs_np,
+                                        bias_AAs_np=bias_AAs_np,
+                                        chain_M_pos=chain_M_pos,
+                                        omit_AA_mask=omit_AA_mask,
+                                        pssm_coef=pssm_coef,
+                                        pssm_bias=pssm_bias,
+                                        pssm_multi=args.pssm_multi,
+                                        pssm_log_odds_flag=bool(args.pssm_log_odds_flag),
+                                        pssm_log_odds_mask=pssm_log_odds_mask,
+                                        pssm_bias_flag=bool(args.pssm_bias_flag),
+                                        tied_pos=tied_pos_list_of_lists_list[0],
+                                        tied_beta=tied_beta,
+                                        bias_by_res=bias_by_res_all,
+                                    )
+                                    # Compute scores
+                                    S_sample = sample_dict["S"]
+                                log_probs = model(
+                                    X,
+                                    S_sample,
+                                    mask,
+                                    chain_M * chain_M_pos,
+                                    residue_idx,
+                                    chain_encoding_all,
+                                    randn_2,
+                                    use_input_decoding_order=True,
+                                    decoding_order=sample_dict["decoding_order"],
+                                )
+                                mask_for_loss = mask * chain_M * chain_M_pos
+                                scores = _scores(S_sample, log_probs, mask_for_loss)
+                                scores = scores.cpu().data.numpy()
+
+                                global_scores = _scores(S_sample, log_probs, mask)  # score the whole structure-sequence
+                                global_scores = global_scores.cpu().data.numpy()
+
+                                all_probs_list.append(sample_dict["probs"].cpu().data.numpy())
+                                all_log_probs_list.append(log_probs.cpu().data.numpy())
+                                S_sample_list.append(S_sample.cpu().data.numpy())
+                                for b_ix in range(BATCH_COPIES):
+                                    masked_chain_length_list = masked_chain_length_list_list[b_ix]
+                                    masked_list = masked_list_list[b_ix]
+                                    seq_recovery_rate = torch.sum(
+                                        torch.sum(
+                                            torch.nn.functional.one_hot(S[b_ix], 21)
+                                            * torch.nn.functional.one_hot(S_sample[b_ix], 21),
+                                            axis=-1,
+                                        )
+                                        * mask_for_loss[b_ix]
+                                    ) / torch.sum(mask_for_loss[b_ix])
+                                    seq = _S_to_seq(S_sample[b_ix], chain_M[b_ix])
+                                    score = scores[b_ix]
+                                    score_list.append(score)
+                                    global_score = global_scores[b_ix]
+                                    global_score_list.append(global_score)
+                                    native_seq = _S_to_seq(S[b_ix], chain_M[b_ix])
+                                    if b_ix == 0 and j == 0 and temp == temperatures[0]:
+                                        start = 0
+                                        end = 0
+                                        list_of_AAs = []
+                                        for mask_l in masked_chain_length_list:
+                                            end += mask_l
+                                            list_of_AAs.append(native_seq[start:end])
+                                            start = end
+                                        native_seq = "".join(list(np.array(list_of_AAs)[np.argsort(masked_list)]))
+                                        l0 = 0
+                                        for mc_length in list(
+                                            np.array(masked_chain_length_list)[np.argsort(masked_list)]
+                                        )[:-1]:
+                                            l0 += mc_length
+                                            native_seq = native_seq[:l0] + "/" + native_seq[l0:]
+                                            l0 += 1
+                                        sorted_masked_chain_letters = np.argsort(masked_list_list[0])
+                                        print_masked_chains = [
+                                            masked_list_list[0][i] for i in sorted_masked_chain_letters
+                                        ]
+                                        sorted_visible_chain_letters = np.argsort(visible_list_list[0])
+                                        print_visible_chains = [
+                                            visible_list_list[0][i] for i in sorted_visible_chain_letters
+                                        ]
+                                        native_score_print = np.format_float_positional(
+                                            np.float32(native_score.mean()), unique=False, precision=4
+                                        )
+                                        global_native_score_print = np.format_float_positional(
+                                            np.float32(global_native_score.mean()), unique=False, precision=4
+                                        )
+                                        script_dir = os.path.dirname(os.path.realpath(__file__))
+                                        try:
+                                            commit_str = (
+                                                subprocess.check_output(
+                                                    f"git --git-dir {script_dir}/.git rev-parse HEAD",
+                                                    shell=True,
+                                                    stderr=subprocess.DEVNULL,
+                                                )
+                                                .decode()
+                                                .strip()
+                                            )
+                                        except subprocess.CalledProcessError:
+                                            commit_str = "unknown"
+                                        if args.ca_only:
+                                            print_model_name = "CA_model_name"
+                                        else:
+                                            print_model_name = "model_name"
+                                        f.write(
+                                            ">{}, score={}, global_score={}, fixed_chains={}, designed_chains={}, {}={}, git_hash={}, seed={}\n{}\n".format(
+                                                name_,
+                                                native_score_print,
+                                                global_native_score_print,
+                                                print_visible_chains,
+                                                print_masked_chains,
+                                                print_model_name,
+                                                args.model_name,
+                                                commit_str,
+                                                seed,
+                                                native_seq,
+                                            )
+                                        )  # write the native sequence
                                     start = 0
                                     end = 0
                                     list_of_AAs = []
                                     for mask_l in masked_chain_length_list:
                                         end += mask_l
-                                        list_of_AAs.append(native_seq[start:end])
+                                        list_of_AAs.append(seq[start:end])
                                         start = end
-                                    native_seq = "".join(list(np.array(list_of_AAs)[np.argsort(masked_list)]))
+
+                                    seq = "".join(list(np.array(list_of_AAs)[np.argsort(masked_list)]))
                                     l0 = 0
-                                    for mc_length in list(np.array(masked_chain_length_list)[np.argsort(masked_list)])[:-1]:
+                                    for mc_length in list(np.array(masked_chain_length_list)[np.argsort(masked_list)])[
+                                        :-1
+                                    ]:
                                         l0 += mc_length
-                                        native_seq = native_seq[:l0] + '/' + native_seq[l0:]
+                                        seq = seq[:l0] + "/" + seq[l0:]
                                         l0 += 1
-                                    sorted_masked_chain_letters = np.argsort(masked_list_list[0])
-                                    print_masked_chains = [masked_list_list[0][i] for i in sorted_masked_chain_letters]
-                                    sorted_visible_chain_letters = np.argsort(visible_list_list[0])
-                                    print_visible_chains = [visible_list_list[0][i] for i in sorted_visible_chain_letters]
-                                    native_score_print = np.format_float_positional(np.float32(native_score.mean()), unique=False, precision=4)
-                                    global_native_score_print = np.format_float_positional(np.float32(global_native_score.mean()), unique=False, precision=4)
-                                    script_dir = os.path.dirname(os.path.realpath(__file__))
-                                    try:
-                                        commit_str = subprocess.check_output(f'git --git-dir {script_dir}/.git rev-parse HEAD', shell=True, stderr=subprocess.DEVNULL).decode().strip()
-                                    except subprocess.CalledProcessError:
-                                        commit_str = 'unknown'
-                                    if args.ca_only:
-                                        print_model_name = 'CA_model_name'
-                                    else:
-                                        print_model_name = 'model_name'
-                                    f.write('>{}, score={}, global_score={}, fixed_chains={}, designed_chains={}, {}={}, git_hash={}, seed={}\n{}\n'.format(name_, native_score_print, global_native_score_print, print_visible_chains, print_masked_chains, print_model_name, args.model_name, commit_str, seed, native_seq)) #write the native sequence
-                                start = 0
-                                end = 0
-                                list_of_AAs = []
-                                for mask_l in masked_chain_length_list:
-                                    end += mask_l
-                                    list_of_AAs.append(seq[start:end])
-                                    start = end
-    
-                                seq = "".join(list(np.array(list_of_AAs)[np.argsort(masked_list)]))
-                                l0 = 0
-                                for mc_length in list(np.array(masked_chain_length_list)[np.argsort(masked_list)])[:-1]:
-                                    l0 += mc_length
-                                    seq = seq[:l0] + '/' + seq[l0:]
-                                    l0 += 1
-                                score_print = np.format_float_positional(np.float32(score), unique=False, precision=4)
-                                global_score_print = np.format_float_positional(np.float32(global_score), unique=False, precision=4)
-                                seq_rec_print = np.format_float_positional(np.float32(seq_recovery_rate.detach().cpu().numpy()), unique=False, precision=4)
-                                sample_number = j*BATCH_COPIES+b_ix+1
-                                f.write('>T={}, sample={}, score={}, global_score={}, seq_recovery={}\n{}\n'.format(temp,sample_number,score_print,global_score_print,seq_rec_print,seq)) #write generated sequence
-                if args.save_score:
-                    np.savez(score_file, score=np.array(score_list, np.float32), global_score=np.array(global_score_list, np.float32))
-                if args.save_probs:
-                    all_probs_concat = np.concatenate(all_probs_list)
-                    all_log_probs_concat = np.concatenate(all_log_probs_list)
-                    S_sample_concat = np.concatenate(S_sample_list)
-                    np.savez(probs_file, probs=np.array(all_probs_concat, np.float32), log_probs=np.array(all_log_probs_concat, np.float32), S=np.array(S_sample_concat, np.int32), mask=mask_for_loss.cpu().data.numpy(), chain_order=chain_list_list)
-                t1 = time.time()
-                dt = round(float(t1-t0), 4)
-                num_seqs = len(temperatures)*NUM_BATCHES*BATCH_COPIES
-                total_length = X.shape[1]
-                if print_all:
-                    print(f'{num_seqs} sequences of length {total_length} generated in {dt} seconds')
-   
+                                    score_print = np.format_float_positional(
+                                        np.float32(score), unique=False, precision=4
+                                    )
+                                    global_score_print = np.format_float_positional(
+                                        np.float32(global_score), unique=False, precision=4
+                                    )
+                                    seq_rec_print = np.format_float_positional(
+                                        np.float32(seq_recovery_rate.detach().cpu().numpy()), unique=False, precision=4
+                                    )
+                                    sample_number = j * BATCH_COPIES + b_ix + 1
+                                    f.write(
+                                        ">T={}, sample={}, score={}, global_score={}, seq_recovery={}\n{}\n".format(
+                                            temp, sample_number, score_print, global_score_print, seq_rec_print, seq
+                                        )
+                                    )  # write generated sequence
+                    if args.save_score:
+                        np.savez(
+                            score_file,
+                            score=np.array(score_list, np.float32),
+                            global_score=np.array(global_score_list, np.float32),
+                        )
+                    if args.save_probs:
+                        all_probs_concat = np.concatenate(all_probs_list)
+                        all_log_probs_concat = np.concatenate(all_log_probs_list)
+                        S_sample_concat = np.concatenate(S_sample_list)
+                        np.savez(
+                            probs_file,
+                            probs=np.array(all_probs_concat, np.float32),
+                            log_probs=np.array(all_log_probs_concat, np.float32),
+                            S=np.array(S_sample_concat, np.int32),
+                            mask=mask_for_loss.cpu().data.numpy(),
+                            chain_order=chain_list_list,
+                        )
+                    t1 = time.time()
+                    dt = round(float(t1 - t0), 4)
+                    num_seqs = len(temperatures) * NUM_BATCHES * BATCH_COPIES
+                    total_length = X.shape[1]
+                    if print_all:
+                        print(f"{num_seqs} sequences of length {total_length} generated in {dt} seconds")
+            except Exception as e:
+                # @TODO: Trying this here as error handling. Might have to delete this again. (Lars)
+                torch.cuda.empty_cache()
+                torch.cuda.synchronize()
+                print(f"Error occurred during sequence generation: {e}")
+
+
 if __name__ == "__main__":
     argparser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
 
