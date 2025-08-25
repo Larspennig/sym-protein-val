@@ -27,6 +27,7 @@ class ValidationPipeline:
 
         self.file_handler.move_processed_backbones(df=self.evaluator.df)
 
+        print("Running ProteinMPNN...")
         run_pmpnn_processes(
             input_path=self.config.backbone_pdbs_dir,
             output_dir=self.config.mpnn_output_dir,
@@ -50,6 +51,7 @@ class ValidationPipeline:
         """Run Boltz folding model."""
         self.file_handler.move_processed_yamls()
 
+        print("Running Boltz folding model...")
         run_boltz_processes(
             yaml_folder=str(self.config.yaml_output_dir),
             max_parallel_samples=self.config.max_parallel_samples,
