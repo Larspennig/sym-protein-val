@@ -93,7 +93,11 @@ def run_pmpnn_processes(input_path, output_dir, symmetry=True, seqs=10, sampling
     #     pmpnn_args.extend(["--device", str(gpu_id)])
 
     # Run the ProteinMPNN prediction script
-    subprocess.run(pmpnn_args)
+    try:
+        subprocess.run(pmpnn_args)
+    except subprocess.CalledProcessError as e:
+        print(f"Error occurred while running ProteinMPNN: {e}")
+        raise
 
 
 def main(input_path, output_path, symmetry=True, seqs=10, sampling_temp=0.2, use_soluble_model=False):
